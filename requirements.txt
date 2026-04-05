@@ -1,1 +1,2 @@
-haikunator
+# Dependencies are managed via pyproject.toml
+# Install dev dependencies with: uv sync --extra dev
