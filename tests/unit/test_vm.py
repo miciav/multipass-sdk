@@ -1,0 +1,248 @@
+import json
+import pytest
+from multipass._backend import CommandResult, FakeBackend
+from multipass.exceptions import MultipassCommandError, VmNotFoundError
+from multipass.models import VmState
+from multipass.vm import MultipassVM
+
+INFO_RESPONSE = json.dumps({
+    "errors": [],
+    "info": {
+        "my-vm": {
+            "cpu_count": "2",
+            "disks": {"sda1": {"total": "5368709120", "used": "1000000000"}},
+            "image_hash": "abc123",
+            "image_release": "22.04 LTS",
+            "ipv4": ["192.168.64.2"],
+            "memory": {"total": 1073741824, "used": 123456789},
+            "mounts": {},
+            "state": "Running",
+        }
+    },
+})
+
+SNAPSHOTS_JSON = json.dumps({
+    "list": [
+        {
+            "comment": "Before upgrade",
+            "created": "2023-08-15T10:30:00.000Z",
+            "instance": "my-vm",
+            "name": "snap1",
+            "parent": None,
+        }
+    ]
+})
+
+
+def make_ok(stdout: str = "") -> CommandResult:
+    return CommandResult(args=[], returncode=0, stdout=stdout, stderr="")
+
+
+def make_err(stderr: str, returncode: int = 1) -> CommandResult:
+    return CommandResult(args=[], returncode=returncode, stdout="", stderr=stderr)
+
+
+# ------------------------------------------------------------------ info
+
+def test_info_returns_vm_info():
+    backend = FakeBackend(
+        {("multipass", "info", "my-vm", "--format", "json"): make_ok(INFO_RESPONSE)}
+    )
+    vm = MultipassVM("my-vm", "multipass", backend)
+    info = vm.info()
+    assert info.name == "my-vm"
+    assert info.state == VmState.RUNNING
+    assert info.ipv4 == ["192.168.64.2"]
+
+
+def test_info_raises_vm_not_found():
+    backend = FakeBackend(
+        {("multipass", "info", "ghost", "--format", "json"): make_err('instance "ghost" does not exist')}
+    )
+    vm = MultipassVM("ghost", "multipass", backend)
+    with pytest.raises(VmNotFoundError):
+        vm.info()
+
+
+def test_info_raises_command_error_on_generic_failure():
+    backend = FakeBackend(
+        {("multipass", "info", "my-vm", "--format", "json"): make_err("some unexpected error")}
+    )
+    vm = MultipassVM("my-vm", "multipass", backend)
+    with pytest.raises(MultipassCommandError):
+        vm.info()
+
+
+# ------------------------------------------------------------ lifecycle
+
+def test_start_sends_correct_command():
+    backend = FakeBackend()
+    backend.set_default(make_ok())
+    vm = MultipassVM("my-vm", "multipass", backend)
+    vm.start()
+    assert backend.last_call() == ["multipass", "start", "my-vm"]
+
+
+def test_stop_sends_correct_command():
+    backend = FakeBackend()
+    backend.set_default(make_ok())
+    vm = MultipassVM("my-vm", "multipass", backend)
+    vm.stop()
+    assert backend.last_call() == ["multipass", "stop", "my-vm"]
+
+
+def test_stop_force_adds_flag():
+    backend = FakeBackend()
+    backend.set_default(make_ok())
+    vm = MultipassVM("my-vm", "multipass", backend)
+    vm.stop(force=True)
+    assert "--force" in backend.last_call()
+
+
+def test_delete_sends_correct_command():
+    backend = FakeBackend()
+    backend.set_default(make_ok())
+    vm = MultipassVM("my-vm", "multipass", backend)
+    vm.delete()
+    assert backend.last_call() == ["multipass", "delete", "my-vm"]
+
+
+def test_delete_purge_adds_flag():
+    backend = FakeBackend()
+    backend.set_default(make_ok())
+    vm = MultipassVM("my-vm", "multipass", backend)
+    vm.delete(purge=True)
+    assert "--purge" in backend.last_call()
+
+
+def test_lifecycle_raises_on_failure():
+    backend = FakeBackend()
+    backend.set_default(make_err("not running"))
+    vm = MultipassVM("my-vm", "multipass", backend)
+    with pytest.raises(MultipassCommandError):
+        vm.start()
+
+
+# -------------------------------------------------------------- exec
+
+def test_exec_builds_command_from_list():
+    exec_result = CommandResult(
+        args=["multipass", "exec", "my-vm", "--", "ls", "-la"],
+        returncode=0,
+        stdout="total 0\n",
+        stderr="",
+    )
+    backend = FakeBackend(
+        {("multipass", "exec", "my-vm", "--", "ls", "-la"): exec_result}
+    )
+    vm = MultipassVM("my-vm", "multipass", backend)
+    result = vm.exec(["ls", "-la"])
+    assert result.stdout == "total 0\n"
+    assert result.success is True
+
+
+def test_exec_raises_on_nonzero():
+    backend = FakeBackend(
+        {("multipass", "exec", "my-vm", "--", "false"): make_err("", returncode=1)}
+    )
+    vm = MultipassVM("my-vm", "multipass", backend)
+    with pytest.raises(MultipassCommandError):
+        vm.exec(["false"])
+
+
+# ------------------------------------------------------------ transfer
+
+def test_transfer_host_to_vm():
+    backend = FakeBackend()
+    backend.set_default(make_ok())
+    vm = MultipassVM("my-vm", "multipass", backend)
+    vm.transfer("/host/path/file.txt", "my-vm:/remote/path/")
+    assert backend.last_call() == [
+        "multipass", "transfer", "-r", "/host/path/file.txt", "my-vm:/remote/path/"
+    ]
+
+
+def test_transfer_vm_to_host():
+    backend = FakeBackend()
+    backend.set_default(make_ok())
+    vm = MultipassVM("my-vm", "multipass", backend)
+    vm.transfer("my-vm:/remote/file.txt", "/host/dest/")
+    assert backend.last_call() == [
+        "multipass", "transfer", "-r", "my-vm:/remote/file.txt", "/host/dest/"
+    ]
+
+
+# -------------------------------------------------------------- mount
+
+def test_mount_sends_correct_command():
+    backend = FakeBackend()
+    backend.set_default(make_ok())
+    vm = MultipassVM("my-vm", "multipass", backend)
+    vm.mount("/host/dir", "my-vm:/mnt/dir")
+    assert backend.last_call() == ["multipass", "mount", "/host/dir", "my-vm:/mnt/dir"]
+
+
+def test_mount_with_options():
+    backend = FakeBackend()
+    backend.set_default(make_ok())
+    vm = MultipassVM("my-vm", "multipass", backend)
+    vm.mount("/host/dir", "my-vm:/mnt/dir", uid_map="1000:1000", gid_map="1000:1000")
+    call = backend.last_call()
+    assert "--uid-map" in call
+    assert "1000:1000" in call
+
+
+def test_unmount_sends_correct_command():
+    backend = FakeBackend()
+    backend.set_default(make_ok())
+    vm = MultipassVM("my-vm", "multipass", backend)
+    vm.unmount("my-vm:/mnt/dir")
+    assert backend.last_call() == ["multipass", "umount", "my-vm:/mnt/dir"]
+
+
+# ---------------------------------------------------------- snapshots
+
+def test_snapshots_returns_list():
+    backend = FakeBackend(
+        {("multipass", "list", "--snapshots", "--format", "json"): make_ok(SNAPSHOTS_JSON)}
+    )
+    vm = MultipassVM("my-vm", "multipass", backend)
+    snaps = vm.snapshots()
+    assert len(snaps) == 1
+    assert snaps[0].name == "snap1"
+
+
+def test_snapshot_create_sends_correct_command():
+    backend = FakeBackend()
+    backend.set_default(make_ok(SNAPSHOTS_JSON))
+    vm = MultipassVM("my-vm", "multipass", backend)
+    vm.snapshot("snap1", comment="Before upgrade")
+    calls = backend.calls
+    assert any(call[:3] == ["multipass", "snapshot", "my-vm"] for call in calls)
+
+
+def test_restore_sends_correct_command():
+    backend = FakeBackend()
+    backend.set_default(make_ok())
+    vm = MultipassVM("my-vm", "multipass", backend)
+    vm.restore("snap1")
+    assert backend.last_call() == ["multipass", "restore", "my-vm.snap1"]
+
+
+def test_restore_destructive_adds_flag():
+    backend = FakeBackend()
+    backend.set_default(make_ok())
+    vm = MultipassVM("my-vm", "multipass", backend)
+    vm.restore("snap1", destructive=True)
+    assert "--destructive" in backend.last_call()
+
+
+# --------------------------------------------------------------- clone
+
+def test_clone_sends_correct_command_and_returns_vm():
+    backend = FakeBackend()
+    backend.set_default(make_ok())
+    vm = MultipassVM("my-vm", "multipass", backend)
+    new_vm = vm.clone("my-vm-clone")
+    assert backend.last_call() == ["multipass", "clone", "my-vm", "--name", "my-vm-clone"]
+    assert new_vm.name == "my-vm-clone"
