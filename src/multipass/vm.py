@@ -24,18 +24,17 @@ class MultipassVM:
         self._cmd = cmd
         self._backend = backend
 
-    # ------------------------------------------------------------------ info
+    def _run(self, cmd: list[str]) -> CommandResult:
+        result = self._backend.run(cmd)
+        _raise_for_result(result, self.name)
+        return result
 
     def info(self) -> VmInfo:
-        result = self._backend.run([self._cmd, "info", self.name, "--format", "json"])
-        _raise_for_result(result, self.name)
+        result = self._run([self._cmd, "info", self.name, "--format", "json"])
         return VmInfo.from_info_json(json.loads(result.stdout), self.name)
 
-    # ------------------------------------------------------------ lifecycle
-
     def start(self) -> None:
-        result = self._backend.run([self._cmd, "start", self.name])
-        _raise_for_result(result, self.name)
+        self._run([self._cmd, "start", self.name])
 
     def stop(self, *, force: bool = False, time: int | None = None) -> None:
         cmd = [self._cmd, "stop", self.name]
@@ -43,38 +42,26 @@ class MultipassVM:
             cmd.append("--force")
         if time is not None:
             cmd += ["--time", str(time)]
-        result = self._backend.run(cmd)
-        _raise_for_result(result, self.name)
+        self._run(cmd)
 
     def restart(self) -> None:
-        result = self._backend.run([self._cmd, "restart", self.name])
-        _raise_for_result(result, self.name)
+        self._run([self._cmd, "restart", self.name])
 
     def suspend(self) -> None:
-        result = self._backend.run([self._cmd, "suspend", self.name])
-        _raise_for_result(result, self.name)
+        self._run([self._cmd, "suspend", self.name])
 
     def delete(self, *, purge: bool = False) -> None:
         cmd = [self._cmd, "delete", self.name]
         if purge:
             cmd.append("--purge")
-        result = self._backend.run(cmd)
-        _raise_for_result(result, self.name)
+        self._run(cmd)
 
     def recover(self) -> None:
-        result = self._backend.run([self._cmd, "recover", self.name])
-        _raise_for_result(result, self.name)
-
-    # -------------------------------------------------------------- exec
+        self._run([self._cmd, "recover", self.name])
 
     def exec(self, command: list[str]) -> CommandResult:
         """Execute a command in the VM. command must be a list of args (no shell splitting)."""
-        cmd = [self._cmd, "exec", self.name, "--"] + command
-        result = self._backend.run(cmd)
-        _raise_for_result(result, self.name)
-        return result
-
-    # ------------------------------------------------------------ transfer
+        return self._run([self._cmd, "exec", self.name, "--"] + command)
 
     def transfer(self, source: str, dest: str) -> None:
         """Transfer files between host and VM.
@@ -82,10 +69,7 @@ class MultipassVM:
         Use 'vm-name:/path' notation for VM paths, plain paths for host.
         Always recursive (-r).
         """
-        result = self._backend.run([self._cmd, "transfer", "-r", source, dest])
-        _raise_for_result(result, self.name)
-
-    # -------------------------------------------------------------- mount
+        self._run([self._cmd, "transfer", "-r", source, dest])
 
     def mount(
         self,
@@ -103,45 +87,34 @@ class MultipassVM:
             cmd += ["--uid-map", uid_map]
         if gid_map:
             cmd += ["--gid-map", gid_map]
-        result = self._backend.run(cmd)
-        _raise_for_result(result, self.name)
+        self._run(cmd)
 
     def unmount(self, mount: str) -> None:
-        result = self._backend.run([self._cmd, "umount", mount])
-        _raise_for_result(result, self.name)
-
-    # ---------------------------------------------------------- snapshots
+        self._run([self._cmd, "umount", mount])
 
     def snapshots(self) -> list[SnapshotInfo]:
-        result = self._backend.run(
-            [self._cmd, "list", "--snapshots", "--format", "json"]
-        )
-        _raise_for_result(result, self.name)
+        result = self._run([self._cmd, "list", "--snapshots", "--format", "json"])
         return SnapshotInfo.from_snapshots_json(json.loads(result.stdout))
 
     def snapshot(self, name: str, *, comment: str | None = None) -> SnapshotInfo:
         cmd = [self._cmd, "snapshot", self.name, "--name", name]
         if comment:
             cmd += ["--comment", comment]
-        result = self._backend.run(cmd)
-        _raise_for_result(result, self.name)
-        all_snaps = self.snapshots()
-        for snap in all_snaps:
-            if snap.name == name:
-                return snap
-        raise MultipassCommandError(cmd, 0, "", f"Snapshot '{name}' not found after creation")
+        self._run(cmd)
+        return SnapshotInfo(
+            name=name,
+            comment=comment or "",
+            created="",
+            parent=None,
+            instance=self.name,
+        )
 
     def restore(self, snapshot: str, *, destructive: bool = False) -> None:
         cmd = [self._cmd, "restore", f"{self.name}.{snapshot}"]
         if destructive:
             cmd.append("--destructive")
-        result = self._backend.run(cmd)
-        _raise_for_result(result, self.name)
-
-    # --------------------------------------------------------------- clone
+        self._run(cmd)
 
     def clone(self, new_name: str) -> "MultipassVM":
-        cmd = [self._cmd, "clone", self.name, "--name", new_name]
-        result = self._backend.run(cmd)
-        _raise_for_result(result, self.name)
+        self._run([self._cmd, "clone", self.name, "--name", new_name])
         return MultipassVM(new_name, self._cmd, self._backend)

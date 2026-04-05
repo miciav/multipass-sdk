@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shutil
 import subprocess
 from dataclasses import dataclass
 from typing import Protocol
@@ -28,9 +27,6 @@ class SubprocessBackend:
     """Real backend — invokes the Multipass CLI via subprocess."""
 
     def run(self, args: list[str]) -> CommandResult:
-        binary = args[0] if args else "multipass"
-        if not shutil.which(binary):
-            raise MultipassNotInstalledError()
         try:
             proc = subprocess.run(args, capture_output=True, text=True)
         except FileNotFoundError:

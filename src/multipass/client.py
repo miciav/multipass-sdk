@@ -11,7 +11,6 @@ from .vm import MultipassVM
 
 
 def _check(result: CommandResult) -> None:
-    """Raise MultipassCommandError on non-zero exit. Used for global (non-VM) commands."""
     if not result.success:
         raise MultipassCommandError(
             result.args, result.returncode, result.stdout, result.stderr
@@ -27,12 +26,16 @@ class MultipassClient:
         self._cmd = cmd
         self._backend: CommandBackend = backend or SubprocessBackend()
 
-    # --------------------------------------------------------- VM factory
+    def _run(self, *args: str) -> CommandResult:
+        result = self._backend.run([self._cmd, *args])
+        _check(result)
+        return result
+
+    def _run_json(self, *args: str) -> dict:
+        return json.loads(self._run(*args).stdout)
 
     def get_vm(self, name: str) -> MultipassVM:
         return MultipassVM(name, self._cmd, self._backend)
-
-    # ------------------------------------------------------------- launch
 
     def launch(
         self,
@@ -46,77 +49,40 @@ class MultipassClient:
     ) -> MultipassVM:
         if name is None:
             name = Haikunator().haikunate(token_length=0)
-        cmd = [
-            self._cmd, "launch",
-            "-n", name,
-            "-c", str(cpus),
-            "-m", memory,
-            "-d", disk,
-        ]
+        cmd = ["launch", "-n", name, "-c", str(cpus), "-m", memory, "-d", disk]
         if cloud_init:
             cmd += ["--cloud-init", cloud_init]
         if image and image != "ubuntu-lts":
             cmd.append(image)
-        result = self._backend.run(cmd)
-        _check(result)
+        self._run(*cmd)
         return MultipassVM(name, self._cmd, self._backend)
 
-    # --------------------------------------------------------------- list
-
     def list(self) -> list[VmInfo]:
-        result = self._backend.run([self._cmd, "list", "--format", "json"])
-        _check(result)
-        return VmInfo.from_list_json(json.loads(result.stdout))
-
-    # --------------------------------------------------------------- find
+        return VmInfo.from_list_json(self._run_json("list", "--format", "json"))
 
     def find(self) -> list[ImageInfo]:
-        result = self._backend.run([self._cmd, "find", "--format", "json"])
-        _check(result)
-        return ImageInfo.from_find_json(json.loads(result.stdout))
-
-    # -------------------------------------------------------------- purge
+        return ImageInfo.from_find_json(self._run_json("find", "--format", "json"))
 
     def purge(self) -> None:
-        result = self._backend.run([self._cmd, "purge"])
-        _check(result)
-
-    # ------------------------------------------------------------ networks
+        self._run("purge")
 
     def networks(self) -> list[NetworkInfo]:
-        result = self._backend.run([self._cmd, "networks", "--format", "json"])
-        _check(result)
-        return NetworkInfo.from_networks_json(json.loads(result.stdout))
-
-    # ------------------------------------------------------------- version
+        return NetworkInfo.from_networks_json(self._run_json("networks", "--format", "json"))
 
     def version(self) -> VersionInfo:
-        result = self._backend.run([self._cmd, "version", "--format", "json"])
-        _check(result)
-        return VersionInfo.from_json(json.loads(result.stdout))
-
-    # ------------------------------------------------------------ get/set
+        return VersionInfo.from_json(self._run_json("version", "--format", "json"))
 
     def get(self, key: str) -> str:
-        result = self._backend.run([self._cmd, "get", key])
-        _check(result)
-        return result.stdout.strip()
+        return self._run("get", key).stdout.strip()
 
     def set(self, key: str, value: str) -> None:
-        result = self._backend.run([self._cmd, "set", f"{key}={value}"])
-        _check(result)
-
-    # ------------------------------------------------------------ aliases
+        self._run("set", f"{key}={value}")
 
     def aliases(self) -> list[AliasInfo]:
-        result = self._backend.run([self._cmd, "aliases", "--format", "json"])
-        _check(result)
-        return AliasInfo.from_aliases_json(json.loads(result.stdout))
+        return AliasInfo.from_aliases_json(self._run_json("aliases", "--format", "json"))
 
     def alias(self, name: str, vm: str, command: str) -> None:
-        result = self._backend.run([self._cmd, "alias", f"{vm}:{command}", name])
-        _check(result)
+        self._run("alias", f"{vm}:{command}", name)
 
     def unalias(self, name: str) -> None:
-        result = self._backend.run([self._cmd, "unalias", name])
-        _check(result)
+        self._run("unalias", name)
