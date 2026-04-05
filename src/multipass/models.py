@@ -44,7 +44,7 @@ class VmInfo:
             ipv4=vm.get("ipv4", []),
             image=vm.get("image_release", ""),
             image_hash=vm.get("image_hash", ""),
-            cpus=int(vm.get("cpu_count", 1)),
+            cpus=int(vm.get("cpu_count") or 0),
             memory_total=str(memory.get("total", 0)),
             memory_used=str(memory.get("used", 0)),
             disk_total=str(first_disk.get("total", "0")),
@@ -158,13 +158,14 @@ class SnapshotInfo:
 
     @classmethod
     def from_snapshots_json(cls, data: dict) -> list["SnapshotInfo"]:
-        return [
-            cls(
-                name=item["name"],
-                comment=item.get("comment", ""),
-                created=item.get("created", ""),
-                parent=item.get("parent"),
-                instance=item.get("instance", ""),
-            )
-            for item in data.get("list", [])
-        ]
+        result = []
+        for instance_name, snapshots in data.get("info", {}).items():
+            for snap_name, snap_data in snapshots.items():
+                result.append(cls(
+                    name=snap_name,
+                    comment=snap_data.get("comment", ""),
+                    created=snap_data.get("created", ""),
+                    parent=snap_data.get("parent") or None,
+                    instance=instance_name,
+                ))
+        return result

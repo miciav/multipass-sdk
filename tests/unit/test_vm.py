@@ -33,15 +33,16 @@ INFO_WITH_IP = json.dumps({
 })
 
 SNAPSHOTS_JSON = json.dumps({
-    "list": [
-        {
-            "comment": "Before upgrade",
-            "created": "2023-08-15T10:30:00.000Z",
-            "instance": "my-vm",
-            "name": "snap1",
-            "parent": None,
+    "errors": [],
+    "info": {
+        "my-vm": {
+            "snap1": {
+                "comment": "Before upgrade",
+                "created": "2023-08-15T10:30:00.000Z",
+                "parent": "",
+            }
         }
-    ]
+    }
 })
 
 

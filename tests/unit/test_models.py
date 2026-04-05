@@ -96,17 +96,19 @@ def test_alias_info_from_json():
 
 def test_snapshot_info_from_json():
     data = {
-        "list": [
-            {
-                "comment": "Before upgrade",
-                "created": "2023-08-15T10:30:00.000Z",
-                "instance": "my-vm",
-                "name": "snapshot1",
-                "parent": None,
+        "errors": [],
+        "info": {
+            "my-vm": {
+                "snapshot1": {
+                    "comment": "Before upgrade",
+                    "created": "2023-08-15T10:30:00.000Z",
+                    "parent": "",
+                }
             }
-        ]
+        },
     }
     snaps = SnapshotInfo.from_snapshots_json(data)
     assert len(snaps) == 1
     assert snaps[0].name == "snapshot1"
+    assert snaps[0].instance == "my-vm"
     assert snaps[0].parent is None
