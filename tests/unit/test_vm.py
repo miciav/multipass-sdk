@@ -99,6 +99,30 @@ def test_stop_force_adds_flag():
     assert "--force" in backend.last_call()
 
 
+def test_restart_sends_correct_command():
+    backend = FakeBackend()
+    backend.set_default(make_ok())
+    vm = MultipassVM("my-vm", "multipass", backend)
+    vm.restart()
+    assert backend.last_call() == ["multipass", "restart", "my-vm"]
+
+
+def test_suspend_sends_correct_command():
+    backend = FakeBackend()
+    backend.set_default(make_ok())
+    vm = MultipassVM("my-vm", "multipass", backend)
+    vm.suspend()
+    assert backend.last_call() == ["multipass", "suspend", "my-vm"]
+
+
+def test_recover_sends_correct_command():
+    backend = FakeBackend()
+    backend.set_default(make_ok())
+    vm = MultipassVM("my-vm", "multipass", backend)
+    vm.recover()
+    assert backend.last_call() == ["multipass", "recover", "my-vm"]
+
+
 def test_delete_sends_correct_command():
     backend = FakeBackend()
     backend.set_default(make_ok())

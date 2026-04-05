@@ -168,6 +168,14 @@ def test_aliases_returns_list():
     assert aliases[0].alias == "myalias"
 
 
+def test_alias_sends_correct_command():
+    backend = FakeBackend()
+    backend.set_default(make_ok())
+    client = MultipassClient(backend=backend)
+    client.alias("myalias", "vm1", "ls")
+    assert backend.last_call() == ["multipass", "alias", "vm1:ls", "myalias"]
+
+
 def test_unalias_sends_correct_command():
     backend = FakeBackend()
     backend.set_default(make_ok())
