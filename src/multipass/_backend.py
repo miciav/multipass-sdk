@@ -47,15 +47,22 @@ class FakeBackend:
         responses: dict[tuple[str, ...], CommandResult] | None = None,
     ) -> None:
         self._responses: dict[tuple[str, ...], CommandResult] = responses or {}
+        self._queues: dict[tuple[str, ...], list[CommandResult]] = {}
         self._calls: list[list[str]] = []
         self._default: CommandResult | None = None
 
     def set_default(self, result: CommandResult) -> None:
         self._default = result
 
+    def push(self, *args: str, result: CommandResult) -> None:
+        """Queue a response for args (consumed in order, takes priority over responses/default)."""
+        self._queues.setdefault(args, []).append(result)
+
     def run(self, args: list[str]) -> CommandResult:
         self._calls.append(list(args))
         key = tuple(args)
+        if key in self._queues and self._queues[key]:
+            return self._queues[key].pop(0)
         if key in self._responses:
             return self._responses[key]
         if self._default is not None:

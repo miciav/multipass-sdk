@@ -42,3 +42,10 @@ class VmAlreadySuspendedError(MultipassError):
     def __init__(self, name: str) -> None:
         self.name = name
         super().__init__(f"VM '{name}' is already suspended")
+
+
+class MultipassTimeoutError(MultipassError):
+    def __init__(self, name: str, timeout: float) -> None:
+        self.name = name
+        self.timeout = timeout
+        super().__init__(f"VM '{name}' did not become ready within {timeout}s")

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import socket
+import time
 
-from .exceptions import MultipassCommandError, VmNotFoundError
+from .exceptions import MultipassCommandError, MultipassError, MultipassTimeoutError, VmNotFoundError
 from .models import SnapshotInfo, VmInfo
 from ._backend import CommandBackend, CommandResult
 
@@ -118,3 +120,30 @@ class MultipassVM:
     def clone(self, new_name: str) -> "MultipassVM":
         self._run([self._cmd, "clone", self.name, "--name", new_name])
         return MultipassVM(new_name, self._cmd, self._backend)
+
+    def wait_for_ip(self, timeout: float = 120, *, interval: float = 2.0) -> str:
+        """Poll info() until the VM has an IPv4 address. Returns the first IP."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                ip_list = self.info().ipv4
+                if ip_list:
+                    return ip_list[0]
+            except MultipassError:
+                pass
+            time.sleep(interval)
+        raise MultipassTimeoutError(self.name, timeout)
+
+    def wait_ready(self, timeout: float = 120, port: int = 22, *, interval: float = 2.0) -> str:
+        """Poll until VM has IP AND TCP port is reachable. Returns the IP."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                ip_list = self.info().ipv4
+                if ip_list:
+                    with socket.create_connection((ip_list[0], port), timeout=1):
+                        return ip_list[0]
+            except (MultipassError, OSError):
+                pass
+            time.sleep(interval)
+        raise MultipassTimeoutError(self.name, timeout)

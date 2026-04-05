@@ -1,7 +1,8 @@
 import json
 import pytest
+from unittest.mock import MagicMock, patch
 from multipass._backend import CommandResult, FakeBackend
-from multipass.exceptions import MultipassCommandError, VmNotFoundError
+from multipass.exceptions import MultipassCommandError, MultipassTimeoutError, VmNotFoundError
 from multipass.models import VmState
 from multipass.vm import MultipassVM
 
@@ -19,6 +20,16 @@ INFO_RESPONSE = json.dumps({
             "state": "Running",
         }
     },
+})
+
+_VM_DATA = json.loads(INFO_RESPONSE)["info"]["my-vm"]
+
+INFO_NO_IP = json.dumps({
+    "errors": [], "info": {"my-vm": {**_VM_DATA, "ipv4": []}}
+})
+
+INFO_WITH_IP = json.dumps({
+    "errors": [], "info": {"my-vm": {**_VM_DATA, "ipv4": ["192.168.64.5"]}}
 })
 
 SNAPSHOTS_JSON = json.dumps({
@@ -270,3 +281,74 @@ def test_clone_sends_correct_command_and_returns_vm():
     new_vm = vm.clone("my-vm-clone")
     assert backend.last_call() == ["multipass", "clone", "my-vm", "--name", "my-vm-clone"]
     assert new_vm.name == "my-vm-clone"
+
+
+# -------------------------------------------------------- wait_for_ip
+
+INFO_KEY = ("multipass", "info", "my-vm", "--format", "json")
+
+
+@patch("multipass.vm.time.sleep")
+def test_wait_for_ip_returns_ip_when_ready(mock_sleep):
+    backend = FakeBackend()
+    backend.push(*INFO_KEY, result=make_ok(INFO_NO_IP))
+    backend.push(*INFO_KEY, result=make_ok(INFO_WITH_IP))
+    vm = MultipassVM("my-vm", "multipass", backend)
+    with patch("multipass.vm.time.monotonic", side_effect=[0, 10, 20]):
+        ip = vm.wait_for_ip(timeout=120, interval=2.0)
+    assert ip == "192.168.64.5"
+    mock_sleep.assert_called_once_with(2.0)
+
+
+@patch("multipass.vm.time.sleep")
+def test_wait_for_ip_raises_timeout(mock_sleep):
+    backend = FakeBackend()
+    backend.set_default(make_ok(INFO_NO_IP))
+    vm = MultipassVM("my-vm", "multipass", backend)
+    with patch("multipass.vm.time.monotonic", side_effect=[0, 130]):
+        with pytest.raises(MultipassTimeoutError) as exc_info:
+            vm.wait_for_ip(timeout=120)
+    assert exc_info.value.name == "my-vm"
+    assert exc_info.value.timeout == 120
+
+
+# -------------------------------------------------------- wait_ready
+
+@patch("multipass.vm.time.sleep")
+@patch("multipass.vm.socket.create_connection")
+def test_wait_ready_returns_ip_when_ssh_reachable(mock_conn, mock_sleep):
+    backend = FakeBackend()
+    backend.set_default(make_ok(INFO_WITH_IP))
+    mock_conn.return_value.__enter__ = MagicMock(return_value=None)
+    mock_conn.return_value.__exit__ = MagicMock(return_value=False)
+    vm = MultipassVM("my-vm", "multipass", backend)
+    with patch("multipass.vm.time.monotonic", side_effect=[0, 10]):
+        ip = vm.wait_ready(timeout=120, port=22)
+    assert ip == "192.168.64.5"
+    mock_conn.assert_called_once_with(("192.168.64.5", 22), timeout=1)
+
+
+@patch("multipass.vm.time.sleep")
+@patch("multipass.vm.socket.create_connection", side_effect=OSError)
+def test_wait_ready_raises_timeout_when_port_unreachable(mock_conn, mock_sleep):
+    backend = FakeBackend()
+    backend.set_default(make_ok(INFO_WITH_IP))
+    vm = MultipassVM("my-vm", "multipass", backend)
+    with patch("multipass.vm.time.monotonic", side_effect=[0, 130]):
+        with pytest.raises(MultipassTimeoutError):
+            vm.wait_ready(timeout=120, port=22)
+
+
+@patch("multipass.vm.time.sleep")
+@patch("multipass.vm.socket.create_connection")
+def test_wait_ready_waits_for_ip_before_tcp(mock_conn, mock_sleep):
+    backend = FakeBackend()
+    backend.push(*INFO_KEY, result=make_ok(INFO_NO_IP))
+    backend.push(*INFO_KEY, result=make_ok(INFO_WITH_IP))
+    mock_conn.return_value.__enter__ = MagicMock(return_value=None)
+    mock_conn.return_value.__exit__ = MagicMock(return_value=False)
+    vm = MultipassVM("my-vm", "multipass", backend)
+    with patch("multipass.vm.time.monotonic", side_effect=[0, 10, 20]):
+        ip = vm.wait_ready(timeout=120, port=22)
+    assert ip == "192.168.64.5"
+    mock_conn.assert_called_once()  # TCP check solo quando IP disponibile
