@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import tempfile
+from pathlib import Path
 
 from haikunator import Haikunator
 
@@ -46,6 +48,7 @@ class MultipassClient:
         memory: str = "1G",
         disk: str = "5G",
         cloud_init: str | None = None,
+        cloud_init_config: dict | str | None = None,
     ) -> MultipassVM:
         if name is None:
             name = Haikunator().haikunate(token_length=0)
@@ -54,7 +57,23 @@ class MultipassClient:
             cmd += ["--cloud-init", cloud_init]
         if image and image != "ubuntu-lts":
             cmd.append(image)
-        self._run(*cmd)
+        if cloud_init_config is not None:
+            content = (
+                json.dumps(cloud_init_config, indent=2)
+                if isinstance(cloud_init_config, dict)
+                else cloud_init_config
+            )
+            tmp = tempfile.NamedTemporaryFile(
+                dir=Path.home(), suffix=".yaml", delete=False, mode="w"
+            )
+            try:
+                tmp.write(content)
+                tmp.close()
+                self._run(*cmd, "--cloud-init", tmp.name)
+            finally:
+                Path(tmp.name).unlink(missing_ok=True)
+        else:
+            self._run(*cmd)
         return MultipassVM(name, self._cmd, self._backend)
 
     def list(self) -> list[VmInfo]:

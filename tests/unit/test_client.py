@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 import pytest
 from multipass._backend import CommandResult, FakeBackend
 from multipass.client import MultipassClient
@@ -101,10 +102,53 @@ def test_launch_with_cloud_init():
     backend = FakeBackend()
     backend.set_default(make_ok())
     client = MultipassClient(backend=backend)
-    client.launch(name="test-vm", cloud_init="/tmp/cloud-init.yaml")
+    client.launch(name="test-vm", cloud_init="/home/user/cloud-init.yaml")
     call = backend.last_call()
     assert "--cloud-init" in call
-    assert "/tmp/cloud-init.yaml" in call
+    assert "/home/user/cloud-init.yaml" in call
+
+
+def test_launch_with_cloud_init_config_dict(tmp_path, monkeypatch):
+    monkeypatch.setattr("multipass.client.Path.home", lambda: tmp_path)
+
+    captured: dict = {}
+
+    class CapturingBackend:
+        calls: list = []
+        def run(self, args):
+            self.calls.append(list(args))
+            if "--cloud-init" in args:
+                idx = args.index("--cloud-init")
+                captured["content"] = Path(args[idx + 1]).read_text()
+                captured["path"] = args[idx + 1]
+            return make_ok()
+
+    client = MultipassClient(backend=CapturingBackend())
+    client.launch(name="test-vm", cloud_init_config={"packages": ["git"]})
+    assert "git" in captured["content"]
+    assert not Path(captured["path"]).exists()
+
+
+def test_launch_with_cloud_init_config_str(tmp_path, monkeypatch):
+    monkeypatch.setattr("multipass.client.Path.home", lambda: tmp_path)
+
+    captured: dict = {}
+
+    class CapturingBackend:
+        calls: list = []
+        def run(self, args):
+            self.calls.append(list(args))
+            if "--cloud-init" in args:
+                idx = args.index("--cloud-init")
+                captured["content"] = Path(args[idx + 1]).read_text()
+                captured["path"] = args[idx + 1]
+            return make_ok()
+
+    yaml_str = "#cloud-config\npackages:\n  - git\n"
+    client = MultipassClient(backend=CapturingBackend())
+    client.launch(name="test-vm", cloud_init_config=yaml_str)
+    assert captured["content"] == yaml_str
+    assert not Path(captured["path"]).exists()
 
 
 def test_launch_raises_on_failure():

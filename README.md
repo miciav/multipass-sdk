@@ -66,7 +66,7 @@ client = MultipassClient(cmd="multipass")   # cmd: path to the CLI binary
 
 | Method | Description |
 |--------|-------------|
-| `launch(name, image, *, cpus, memory, disk, cloud_init) → MultipassVM` | Launch a new VM |
+| `launch(name, image, *, cpus, memory, disk, cloud_init, cloud_init_config) → MultipassVM` | Launch a new VM |
 | `get_vm(name) → MultipassVM` | Get a VM object by name |
 | `list() → list[VmInfo]` | List all VMs |
 | `find() → list[ImageInfo]` | List available images |
@@ -141,8 +141,71 @@ vm.start()
 
 ### cloud-init
 
+Pass a file path, a YAML string, or a dict — the SDK handles the rest.
+
+**File path** (you manage the file):
+
 ```python
-vm = client.launch(name="configured-vm", cloud_init="/path/to/cloud-init.yaml")
+vm = client.launch(name="my-vm", cloud_init="/home/user/cloud-init.yaml")
+```
+
+**Inline dict** (serialized to JSON, which cloud-init accepts natively):
+
+```python
+vm = client.launch(
+    name="my-vm",
+    cloud_init_config={
+        "packages": ["git", "curl"],
+        "runcmd": ["apt-get upgrade -y"],
+    }
+)
+```
+
+**Inline YAML string**:
+
+```python
+vm = client.launch(
+    name="my-vm",
+    cloud_init_config="""
+#cloud-config
+packages:
+  - git
+  - curl
+runcmd:
+  - apt-get upgrade -y
+"""
+)
+```
+
+When `cloud_init_config` is used, the SDK writes a temporary file to the user's home directory (not `/tmp`) so that Multipass installed via snap can read it. The file is deleted automatically after launch.
+
+#### Custom user and SSH key
+
+```python
+from pathlib import Path
+
+ssh_key = Path("~/.ssh/id_rsa.pub").expanduser().read_text().strip()
+
+vm = client.launch(
+    name="my-vm",
+    cloud_init_config={
+        "users": [
+            {
+                "name": "michele",
+                "groups": ["sudo"],
+                "shell": "/bin/bash",
+                "sudo": "ALL=(ALL) NOPASSWD:ALL",
+                "ssh_authorized_keys": [ssh_key],
+            }
+        ]
+    }
+)
+```
+
+To keep the default `ubuntu` user alongside your custom one, add `"default"` as the first entry in the `users` list:
+
+```python
+"users": ["default", {"name": "michele", ...}]
 ```
 
 ---
