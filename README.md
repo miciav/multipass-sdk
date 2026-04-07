@@ -67,6 +67,7 @@ client = MultipassClient(cmd="multipass")   # cmd: path to the CLI binary
 | Method | Description |
 |--------|-------------|
 | `launch(name, image, *, cpus, memory, disk, cloud_init, cloud_init_config) → MultipassVM` | Launch a new VM |
+| `ensure_running(name, image, *, cpus, memory, disk, cloud_init, cloud_init_config) → MultipassVM` | Idempotent: launch, start, or no-op so the VM ends up Running |
 | `get_vm(name) → MultipassVM` | Get a VM object by name |
 | `list() → list[VmInfo]` | List all VMs |
 | `find() → list[ImageInfo]` | List available images |
@@ -206,6 +207,25 @@ To keep the default `ubuntu` user alongside your custom one, add `"default"` as 
 
 ```python
 "users": ["default", {"name": "michele", ...}]
+```
+
+### SSH key injection helper
+
+`find_ssh_public_key()` returns the content of the first SSH public key found in
+`~/.ssh/` (priority: ed25519 → rsa → ecdsa → dsa), or `None` if none exists.
+Combine it with `cloud_init_config` to make new VMs immediately accessible:
+
+```python
+from multipass import MultipassClient, find_ssh_public_key
+
+client = MultipassClient()
+pub_key = find_ssh_public_key()
+
+vm = client.ensure_running(
+    "my-vm",
+    cloud_init_config={"ssh_authorized_keys": [pub_key]} if pub_key else None,
+)
+ip = vm.wait_ready(timeout=180)
 ```
 
 ---
