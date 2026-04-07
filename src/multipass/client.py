@@ -91,9 +91,15 @@ class MultipassClient:
 
         State machine:
         - Not found  → launch with provided parameters
-        - Deleted    → purge all soft-deleted VMs, then launch
+        - Deleted    → purge *all* soft-deleted VMs (system-wide), then launch
         - Running    → no-op
         - Any other  → start (Stopped, Suspended, etc.)
+
+        .. warning::
+            When the VM is in DELETED state, ``multipass purge`` is called, which
+            permanently removes **all** soft-deleted instances on the system — not
+            only the target VM. Ensure no other instances in DELETED state need
+            to be recovered before calling this method.
 
         Returns the ``MultipassVM`` object in all cases.
         """
