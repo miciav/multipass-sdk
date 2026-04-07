@@ -20,6 +20,7 @@ from .models import (
     SnapshotInfo,
 )
 from ._backend import CommandResult, FakeBackend, SubprocessBackend
+from .utils import find_ssh_public_key
 
 __all__ = [
     "MultipassClient",
@@ -42,4 +43,5 @@ __all__ = [
     "CommandResult",
     "FakeBackend",
     "SubprocessBackend",
+    "find_ssh_public_key",
 ]
