@@ -46,6 +46,23 @@ def make_err(stderr: str = "error") -> CommandResult:
     return CommandResult(args=[], returncode=1, stdout="", stderr=stderr)
 
 
+def _info_json(name: str, state: str, ipv4: list[str] | None = None) -> str:
+    return json.dumps({
+        "info": {
+            name: {
+                "state": state,
+                "ipv4": ipv4 or [],
+                "image_release": "22.04",
+                "image_hash": "",
+                "cpu_count": 1,
+                "memory": {},
+                "disks": {},
+                "mounts": {},
+            }
+        }
+    })
+
+
 def test_list_returns_vm_info_list():
     backend = FakeBackend(
         {("multipass", "list", "--format", "json"): make_ok(LIST_JSON)}
@@ -234,6 +251,112 @@ def test_custom_multipass_cmd():
     client = MultipassClient(cmd="/usr/local/bin/multipass", backend=backend)
     client.list()
     assert backend.calls[0][0] == "/usr/local/bin/multipass"
+
+
+# ------------------------------------------------------------------ ensure_running
+
+def test_ensure_running_launches_vm_when_not_found():
+    name = "my-vm"
+    backend = FakeBackend()
+    backend.push("multipass", "info", name, "--format", "json",
+                 result=make_err(f"instance '{name}' does not exist"))
+    backend.set_default(make_ok())
+    client = MultipassClient(backend=backend)
+
+    vm = client.ensure_running(name)
+
+    assert vm.name == name
+    assert any(call[1] == "launch" for call in backend.calls)
+
+
+def test_ensure_running_is_noop_when_already_running():
+    name = "my-vm"
+    backend = FakeBackend({
+        ("multipass", "info", name, "--format", "json"): make_ok(_info_json(name, "Running")),
+    })
+    client = MultipassClient(backend=backend)
+
+    vm = client.ensure_running(name)
+
+    assert vm.name == name
+    assert not any(call[1] == "launch" for call in backend.calls)
+    assert not any(call[1] == "start" for call in backend.calls)
+
+
+def test_ensure_running_starts_stopped_vm():
+    name = "my-vm"
+    backend = FakeBackend({
+        ("multipass", "info", name, "--format", "json"): make_ok(_info_json(name, "Stopped")),
+        ("multipass", "start", name): make_ok(),
+    })
+    client = MultipassClient(backend=backend)
+
+    vm = client.ensure_running(name)
+
+    assert vm.name == name
+    assert any(call == ["multipass", "start", name] for call in backend.calls)
+    assert not any(call[1] == "launch" for call in backend.calls)
+
+
+def test_ensure_running_starts_suspended_vm():
+    name = "my-vm"
+    backend = FakeBackend({
+        ("multipass", "info", name, "--format", "json"): make_ok(_info_json(name, "Suspended")),
+        ("multipass", "start", name): make_ok(),
+    })
+    client = MultipassClient(backend=backend)
+
+    vm = client.ensure_running(name)
+
+    assert vm.name == name
+    assert any(call == ["multipass", "start", name] for call in backend.calls)
+
+
+def test_ensure_running_purges_and_relaunches_deleted_vm():
+    name = "my-vm"
+    backend = FakeBackend()
+    backend.push("multipass", "info", name, "--format", "json",
+                 result=make_ok(_info_json(name, "Deleted")))
+    backend.set_default(make_ok())
+    client = MultipassClient(backend=backend)
+
+    vm = client.ensure_running(name)
+
+    assert vm.name == name
+    assert any(call == ["multipass", "purge"] for call in backend.calls)
+    assert any(call[1] == "launch" for call in backend.calls)
+
+
+def test_ensure_running_forwards_launch_params():
+    name = "my-vm"
+    backend = FakeBackend()
+    backend.push("multipass", "info", name, "--format", "json",
+                 result=make_err(f"instance '{name}' does not exist"))
+    backend.set_default(make_ok())
+    client = MultipassClient(backend=backend)
+
+    client.ensure_running(name, "22.04", cpus=4, memory="8G", disk="30G")
+
+    launch_call = next(call for call in backend.calls if call[1] == "launch")
+    assert "4" in launch_call
+    assert "8G" in launch_call
+    assert "30G" in launch_call
+    assert "22.04" in launch_call
+
+
+def test_ensure_running_forwards_cloud_init_config(tmp_path, monkeypatch):
+    monkeypatch.setattr("multipass.client.Path.home", lambda: tmp_path)
+    name = "my-vm"
+    backend = FakeBackend()
+    backend.push("multipass", "info", name, "--format", "json",
+                 result=make_err(f"instance '{name}' does not exist"))
+    backend.set_default(make_ok())
+    client = MultipassClient(backend=backend)
+
+    client.ensure_running(name, cloud_init_config={"ssh_authorized_keys": ["ssh-ed25519 AAAA..."]})
+
+    launch_call = next(call for call in backend.calls if call[1] == "launch")
+    assert "--cloud-init" in launch_call
 
 
 def test_public_api_importable():

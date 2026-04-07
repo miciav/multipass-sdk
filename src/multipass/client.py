@@ -8,7 +8,7 @@ from haikunator import Haikunator
 
 from ._backend import CommandBackend, CommandResult, SubprocessBackend
 from .exceptions import MultipassCommandError
-from .models import AliasInfo, ImageInfo, NetworkInfo, VmInfo, VersionInfo
+from .models import AliasInfo, ImageInfo, NetworkInfo, VmInfo, VmState, VersionInfo
 from .vm import MultipassVM
 
 
@@ -75,6 +75,53 @@ class MultipassClient:
         else:
             self._run(*cmd)
         return MultipassVM(name, self._cmd, self._backend)
+
+    def ensure_running(
+        self,
+        name: str,
+        image: str | None = None,
+        *,
+        cpus: int = 1,
+        memory: str = "1G",
+        disk: str = "5G",
+        cloud_init: str | None = None,
+        cloud_init_config: dict | str | None = None,
+    ) -> MultipassVM:
+        """Ensure the named VM exists and is running.
+
+        State machine:
+        - Not found  → launch with provided parameters
+        - Deleted    → purge all soft-deleted VMs, then launch
+        - Running    → no-op
+        - Any other  → start (Stopped, Suspended, etc.)
+
+        Returns the ``MultipassVM`` object in all cases.
+        """
+        from .exceptions import VmNotFoundError
+
+        try:
+            info = self.get_vm(name).info()
+        except VmNotFoundError:
+            return self.launch(
+                name, image,
+                cpus=cpus, memory=memory, disk=disk,
+                cloud_init=cloud_init, cloud_init_config=cloud_init_config,
+            )
+
+        if info.state == VmState.RUNNING:
+            return self.get_vm(name)
+
+        if info.state == VmState.DELETED:
+            self.purge()
+            return self.launch(
+                name, image,
+                cpus=cpus, memory=memory, disk=disk,
+                cloud_init=cloud_init, cloud_init_config=cloud_init_config,
+            )
+
+        # Stopped, Suspended, Starting, Restarting, Unknown → try to start
+        self.get_vm(name).start()
+        return self.get_vm(name)
 
     def list(self) -> list[VmInfo]:
         return VmInfo.from_list_json(self._run_json("list", "--format", "json"))
