@@ -7,7 +7,7 @@ from pathlib import Path
 from haikunator import Haikunator
 
 from ._backend import CommandBackend, CommandResult, SubprocessBackend
-from .exceptions import MultipassCommandError
+from .exceptions import MultipassCommandError, VmNotFoundError
 from .models import AliasInfo, ImageInfo, NetworkInfo, VmInfo, VmState, VersionInfo
 from .vm import MultipassVM
 
@@ -97,8 +97,6 @@ class MultipassClient:
 
         Returns the ``MultipassVM`` object in all cases.
         """
-        from .exceptions import VmNotFoundError
-
         try:
             info = self.get_vm(name).info()
         except VmNotFoundError:
