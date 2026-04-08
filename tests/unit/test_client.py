@@ -142,7 +142,11 @@ def test_launch_with_cloud_init_config_dict(tmp_path, monkeypatch):
 
     client = MultipassClient(backend=CapturingBackend())
     client.launch(name="test-vm", cloud_init_config={"packages": ["git"]})
-    assert "git" in captured["content"]
+    content = captured["content"]
+    assert content.startswith("#cloud-config\n")
+    import yaml
+    parsed = yaml.safe_load(content)
+    assert parsed["packages"] == ["git"]
     assert not Path(captured["path"]).exists()
 
 

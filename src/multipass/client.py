@@ -4,6 +4,8 @@ import json
 import tempfile
 from pathlib import Path
 
+import yaml
+
 from haikunator import Haikunator
 
 from ._backend import CommandBackend, CommandResult, SubprocessBackend
@@ -58,11 +60,10 @@ class MultipassClient:
         if image and image != "ubuntu-lts":
             cmd.append(image)
         if cloud_init_config is not None:
-            content = (
-                json.dumps(cloud_init_config, indent=2)
-                if isinstance(cloud_init_config, dict)
-                else cloud_init_config
-            )
+            if isinstance(cloud_init_config, dict):
+                content = "#cloud-config\n" + yaml.dump(cloud_init_config, default_flow_style=False)
+            else:
+                content = cloud_init_config
             tmp = tempfile.NamedTemporaryFile(
                 dir=Path.home(), suffix=".yaml", delete=False, mode="w"
             )
