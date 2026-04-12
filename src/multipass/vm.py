@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import socket
 import time
 
@@ -64,6 +65,28 @@ class MultipassVM:
     def exec(self, command: list[str]) -> CommandResult:
         """Execute a command in the VM. command must be a list of args (no shell splitting)."""
         return self._run([self._cmd, "exec", self.name, "--"] + command)
+
+    def exec_structured(
+        self,
+        argv: list[str],
+        *,
+        env: dict[str, str] | None = None,
+        cwd: str | None = None,
+    ) -> CommandResult:
+        """Execute a structured command inside the VM via a login shell.
+
+        Builds the minimal bash prologue (cd + export) from structured arguments
+        so callers never need to construct shell strings.  The bash boundary is
+        confined to this single method.
+        """
+        parts: list[str] = []
+        if cwd:
+            parts.append(f"cd {shlex.quote(cwd)}")
+        for k, v in (env or {}).items():
+            parts.append(f"export {k}={shlex.quote(v)}")
+        parts.append(shlex.join(argv))
+        command = " && ".join(parts)
+        return self._run([self._cmd, "exec", self.name, "--", "bash", "-lc", command])
 
     def transfer(self, source: str, dest: str) -> None:
         """Transfer files between host and VM.
