@@ -11,6 +11,8 @@ from .exceptions import (
     VmAlreadySuspendedError,
 )
 from .models import (
+    CloudInitConfig,
+    VmConfig,
     VmInfo,
     VmState,
     ImageInfo,
@@ -33,6 +35,8 @@ __all__ = [
     "VmAlreadyRunningError",
     "VmNotRunningError",
     "VmAlreadySuspendedError",
+    "CloudInitConfig",
+    "VmConfig",
     "VmInfo",
     "VmState",
     "ImageInfo",

@@ -4,7 +4,7 @@ import pytest
 from multipass._backend import CommandResult, FakeBackend
 from multipass.client import MultipassClient
 from multipass.exceptions import MultipassCommandError
-from multipass.models import VmState
+from multipass.models import VmConfig, VmState
 from multipass.vm import MultipassVM
 
 LIST_JSON = json.dumps({
@@ -374,6 +374,8 @@ def test_public_api_importable():
         VmAlreadyRunningError,
         VmNotRunningError,
         VmAlreadySuspendedError,
+        VmConfig,
+        CloudInitConfig,
         VmInfo,
         VmState,
         ImageInfo,
@@ -386,3 +388,76 @@ def test_public_api_importable():
         SubprocessBackend,
     )
     assert MultipassClient is not None
+    assert VmConfig is not None
+    assert CloudInitConfig is not None
+
+
+# ------------------------------------------------------------------ VmConfig launch
+
+
+def test_launch_with_vm_config():
+    backend = FakeBackend()
+    backend.set_default(make_ok())
+    client = MultipassClient(backend=backend)
+    cfg = VmConfig(name="cfg-vm", cpus=8, memory="16G", disk="100G")
+    vm = client.launch(cfg)
+    assert vm.name == "cfg-vm"
+    call = backend.last_call()
+    assert "cfg-vm" in call
+    assert "8" in call
+    assert "16G" in call
+    assert "100G" in call
+
+
+def test_launch_with_vm_config_generates_name():
+    backend = FakeBackend()
+    backend.set_default(make_ok())
+    client = MultipassClient(backend=backend)
+    vm = client.launch(VmConfig(cpus=2))
+    assert vm.name  # auto-generated
+
+
+# ------------------------------------------------------------------ launch_many
+
+
+def test_launch_many_returns_vms():
+    backend = FakeBackend()
+    backend.set_default(make_ok())
+    client = MultipassClient(backend=backend)
+    configs = [
+        VmConfig(name="vm1", cpus=1),
+        VmConfig(name="vm2", cpus=2),
+    ]
+    vms = client.launch_many(configs)
+    assert len(vms) == 2
+    assert vms[0].name == "vm1"
+    assert vms[1].name == "vm2"
+
+
+def test_launch_many_empty_returns_empty():
+    client = MultipassClient(backend=FakeBackend())
+    assert client.launch_many([]) == []
+
+
+def test_launch_many_rolls_back_on_failure():
+    backend = FakeBackend()
+    # First launch succeeds, second fails
+    backend.push(
+        "multipass", "launch", "-n", "vm1", "-c", "1", "-m", "1G", "-d", "5G",
+        result=make_ok(),
+    )
+    backend.push(
+        "multipass", "launch", "-n", "vm2", "-c", "2", "-m", "1G", "-d", "5G",
+        result=make_err("launch failed"),
+    )
+    # vm1 delete during rollback
+    backend.set_default(make_ok())
+    client = MultipassClient(backend=backend)
+    configs = [
+        VmConfig(name="vm1", cpus=1),
+        VmConfig(name="vm2", cpus=2),
+    ]
+    with pytest.raises(MultipassCommandError):
+        client.launch_many(configs)
+    # Verify vm1 was deleted (rollback)
+    assert any(call[1] == "delete" for call in backend.calls)

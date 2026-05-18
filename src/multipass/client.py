@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import yaml
@@ -10,7 +11,7 @@ from haikunator import Haikunator
 
 from ._backend import CommandBackend, CommandResult, SubprocessBackend
 from .exceptions import MultipassCommandError, VmNotFoundError
-from .models import AliasInfo, ImageInfo, NetworkInfo, VmInfo, VmState, VersionInfo
+from .models import AliasInfo, ImageInfo, NetworkInfo, VmConfig, VmInfo, VmState, VersionInfo
 from .vm import MultipassVM
 
 
@@ -43,7 +44,7 @@ class MultipassClient:
 
     def launch(
         self,
-        name: str | None = None,
+        name: str | VmConfig | None = None,
         image: str | None = None,
         *,
         cpus: int = 1,
@@ -52,6 +53,23 @@ class MultipassClient:
         cloud_init: str | None = None,
         cloud_init_config: dict | str | None = None,
     ) -> MultipassVM:
+        """Launch a new VM.
+
+        Accepts either a VmConfig object or inline parameters::
+
+            vm = client.launch("my-vm", cpus=4, memory="8G")
+            vm = client.launch(VmConfig(name="my-vm", cpus=4, memory="8G"))
+        """
+        if isinstance(name, VmConfig):
+            cfg = name
+            name = cfg.name
+            image = cfg.image
+            cpus = cfg.cpus
+            memory = cfg.memory
+            disk = cfg.disk
+            cloud_init = cfg.cloud_init
+            cloud_init_config = cfg.cloud_init_config
+
         if name is None:
             name = Haikunator().haikunate(token_length=0)
         cmd = ["launch", "-n", name, "-c", str(cpus), "-m", memory, "-d", disk]
@@ -76,6 +94,48 @@ class MultipassClient:
         else:
             self._run(*cmd)
         return MultipassVM(name, self._cmd, self._backend)
+
+    def launch_many(
+        self,
+        configs: list[VmConfig],
+        *,
+        max_workers: int | None = None,
+    ) -> list[MultipassVM]:
+        """Launch multiple VMs in parallel. Rolls back all on any failure."""
+        if not configs:
+            return []
+
+        workers = max_workers if max_workers is not None else len(configs)
+        created: list[MultipassVM] = []
+        first_error: BaseException | None = None
+
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                executor.submit(self.launch, cfg): cfg
+                for cfg in configs
+            }
+
+            for fut in as_completed(futures):
+                if first_error is not None:
+                    continue
+                exc = fut.exception()
+                if exc is not None:
+                    first_error = exc
+                    for pending in futures:
+                        pending.cancel()
+                else:
+                    created.append(fut.result())
+
+        if first_error is not None:
+            with ThreadPoolExecutor(max_workers=max(len(created), 1)) as rollback:
+                for rf in [rollback.submit(vm.delete) for vm in created]:
+                    try:
+                        rf.result()
+                    except Exception:
+                        pass
+            raise first_error
+
+        return created
 
     def ensure_running(
         self,
@@ -124,7 +184,7 @@ class MultipassClient:
                 cloud_init=cloud_init, cloud_init_config=cloud_init_config,
             )
 
-        # Stopped, Suspended, Starting, Restarting, Unknown → try to start
+        # Stopped, Suspended, Starting, Restarting, Unknown
         self.get_vm(name).start()
         return self.get_vm(name)
 

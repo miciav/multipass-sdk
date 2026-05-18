@@ -50,3 +50,31 @@ def test_fake_backend_last_call():
     backend.set_default(ok)
     backend.run(["multipass", "start", "vm1"])
     assert backend.last_call() == ["multipass", "start", "vm1"]
+
+
+def test_fake_backend_tracks_cwd():
+    backend = FakeBackend()
+    ok = CommandResult(args=[], returncode=0, stdout="", stderr="")
+    backend.set_default(ok)
+    backend.run(["multipass", "list"], cwd="/some/dir")
+    assert backend.last_cwd() == "/some/dir"
+    assert backend.cwds == ["/some/dir"]
+
+
+def test_fake_backend_tracks_env():
+    backend = FakeBackend()
+    ok = CommandResult(args=[], returncode=0, stdout="", stderr="")
+    backend.set_default(ok)
+    env = {"KEY": "value"}
+    backend.run(["multipass", "list"], env=env)
+    assert backend.last_env() == env
+    assert backend.envs == [env]
+
+
+def test_fake_backend_default_no_cwd_env():
+    backend = FakeBackend()
+    ok = CommandResult(args=[], returncode=0, stdout="", stderr="")
+    backend.set_default(ok)
+    backend.run(["multipass", "list"])
+    assert backend.last_cwd() is None
+    assert backend.last_env() is None

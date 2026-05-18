@@ -353,3 +353,45 @@ def test_wait_ready_waits_for_ip_before_tcp(mock_conn, mock_sleep):
         ip = vm.wait_ready(timeout=120, port=22)
     assert ip == "192.168.64.5"
     mock_conn.assert_called_once()  # TCP check solo quando IP disponibile
+
+
+def test_exec_structured_includes_set_e():
+    backend = FakeBackend()
+    backend.set_default(make_ok())
+    vm = MultipassVM("my-vm", "multipass", backend)
+    vm.exec_structured(["echo", "hello"], cwd="/tmp", env={"FOO": "bar"})
+    call = backend.last_call()
+    # The bash command should start with "set -e"
+    bash_cmd = call[-1]
+    assert bash_cmd.startswith("set -e &&")
+
+
+def test_snapshots_filters_by_current_vm():
+    import json
+    snapshots_for_two = json.dumps({
+        "errors": [],
+        "info": {
+            "my-vm": {
+                "snap1": {
+                    "comment": "First",
+                    "created": "2023-01-01T00:00:00Z",
+                    "parent": "",
+                }
+            },
+            "other-vm": {
+                "snap2": {
+                    "comment": "Other",
+                    "created": "2023-01-02T00:00:00Z",
+                    "parent": "",
+                }
+            },
+        }
+    })
+    backend = FakeBackend({
+        ("multipass", "list", "--snapshots", "--format", "json"): make_ok(snapshots_for_two)
+    })
+    vm = MultipassVM("my-vm", "multipass", backend)
+    snaps = vm.snapshots()
+    assert len(snaps) == 1
+    assert snaps[0].name == "snap1"
+    assert snaps[0].instance == "my-vm"

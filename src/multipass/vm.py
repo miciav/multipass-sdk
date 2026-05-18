@@ -85,7 +85,7 @@ class MultipassVM:
         for k, v in (env or {}).items():
             parts.append(f"export {k}={shlex.quote(v)}")
         parts.append(shlex.join(argv))
-        command = " && ".join(parts)
+        command = "set -e && " + " && ".join(parts)
         return self._run([self._cmd, "exec", self.name, "--", "bash", "-lc", command])
 
     def transfer(self, source: str, dest: str) -> None:
@@ -119,7 +119,8 @@ class MultipassVM:
 
     def snapshots(self) -> list[SnapshotInfo]:
         result = self._run([self._cmd, "list", "--snapshots", "--format", "json"])
-        return SnapshotInfo.from_snapshots_json(json.loads(result.stdout))
+        all_snaps = SnapshotInfo.from_snapshots_json(json.loads(result.stdout))
+        return [s for s in all_snaps if s.instance == self.name]
 
     def snapshot(self, name: str, *, comment: str | None = None) -> SnapshotInfo:
         cmd = [self._cmd, "snapshot", self.name, "--name", name]

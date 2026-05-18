@@ -20,15 +20,27 @@ class CommandResult:
 
 
 class CommandBackend(Protocol):
-    def run(self, args: list[str]) -> CommandResult: ...
+    def run(
+        self,
+        args: list[str],
+        *,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+    ) -> CommandResult: ...
 
 
 class SubprocessBackend:
     """Real backend — invokes the Multipass CLI via subprocess."""
 
-    def run(self, args: list[str]) -> CommandResult:
+    def run(
+        self,
+        args: list[str],
+        *,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+    ) -> CommandResult:
         try:
-            proc = subprocess.run(args, capture_output=True, text=True)
+            proc = subprocess.run(args, capture_output=True, text=True, cwd=cwd, env=env)
         except FileNotFoundError:
             raise MultipassNotInstalledError()
         return CommandResult(
@@ -49,6 +61,8 @@ class FakeBackend:
         self._responses: dict[tuple[str, ...], CommandResult] = responses or {}
         self._queues: dict[tuple[str, ...], list[CommandResult]] = {}
         self._calls: list[list[str]] = []
+        self._cwds: list[str | None] = []
+        self._envs: list[dict[str, str] | None] = []
         self._default: CommandResult | None = None
 
     def set_default(self, result: CommandResult) -> None:
@@ -58,8 +72,16 @@ class FakeBackend:
         """Queue a response for args (consumed in order, takes priority over responses/default)."""
         self._queues.setdefault(args, []).append(result)
 
-    def run(self, args: list[str]) -> CommandResult:
+    def run(
+        self,
+        args: list[str],
+        *,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+    ) -> CommandResult:
         self._calls.append(list(args))
+        self._cwds.append(cwd)
+        self._envs.append(env)
         key = tuple(args)
         if key in self._queues and self._queues[key]:
             return self._queues[key].pop(0)
@@ -73,5 +95,19 @@ class FakeBackend:
     def calls(self) -> list[list[str]]:
         return list(self._calls)
 
+    @property
+    def cwds(self) -> list[str | None]:
+        return list(self._cwds)
+
+    @property
+    def envs(self) -> list[dict[str, str] | None]:
+        return list(self._envs)
+
     def last_call(self) -> list[str]:
         return self._calls[-1] if self._calls else []
+
+    def last_cwd(self) -> str | None:
+        return self._cwds[-1] if self._cwds else None
+
+    def last_env(self) -> dict[str, str] | None:
+        return self._envs[-1] if self._envs else None

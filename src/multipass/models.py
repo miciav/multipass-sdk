@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from enum import Enum
 
 
@@ -146,6 +146,46 @@ class AliasInfo:
             )
             for item in data.get("aliases", [])
         ]
+
+
+@dataclass
+class VmConfig:
+    """Reusable VM launch configuration."""
+
+    name: str | None = None
+    image: str | None = None
+    cpus: int = 1
+    memory: str = "1G"
+    disk: str = "5G"
+    cloud_init: str | None = None
+    cloud_init_config: dict | str | None = None
+
+
+@dataclass
+class CloudInitConfig:
+    """Structured cloud-init configuration.
+
+    Example::
+
+        CloudInitConfig(
+            packages=["git", "curl"],
+            ssh_authorized_keys=["ssh-ed25519 AAAA..."],
+        )
+    """
+
+    packages: list[str] | None = None
+    ssh_authorized_keys: list[str] | None = None
+    runcmd: list[list[str]] | None = None
+    write_files: list[dict] | None = None
+    users: list[dict] | None = None
+
+    def to_dict(self) -> dict:
+        result: dict = {}
+        for f in fields(self):
+            value = getattr(self, f.name)
+            if value is not None:
+                result[f.name] = value
+        return result
 
 
 @dataclass

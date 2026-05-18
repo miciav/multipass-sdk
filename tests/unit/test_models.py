@@ -1,5 +1,5 @@
 from multipass.models import (
-    VmInfo, VmState, ImageInfo, NetworkInfo, VersionInfo, AliasInfo, SnapshotInfo
+    CloudInitConfig, VmConfig, VmInfo, VmState, ImageInfo, NetworkInfo, VersionInfo, AliasInfo, SnapshotInfo
 )
 
 INFO_JSON = {
@@ -112,3 +112,45 @@ def test_snapshot_info_from_json():
     assert snaps[0].name == "snapshot1"
     assert snaps[0].instance == "my-vm"
     assert snaps[0].parent is None
+
+
+def test_vm_config_defaults():
+    cfg = VmConfig()
+    assert cfg.name is None
+    assert cfg.cpus == 1
+    assert cfg.memory == "1G"
+    assert cfg.disk == "5G"
+
+
+def test_vm_config_with_values():
+    cfg = VmConfig(name="test", cpus=4, memory="8G", disk="30G", image="22.04")
+    assert cfg.name == "test"
+    assert cfg.cpus == 4
+    assert cfg.memory == "8G"
+    assert cfg.disk == "30G"
+    assert cfg.image == "22.04"
+
+
+def test_cloud_init_config_to_dict_includes_only_set_fields():
+    cfg = CloudInitConfig(packages=["git", "curl"])
+    d = cfg.to_dict()
+    assert d == {"packages": ["git", "curl"]}
+
+
+def test_cloud_init_config_to_dict_excludes_none():
+    cfg = CloudInitConfig(
+        packages=["git"],
+        ssh_authorized_keys=["ssh-ed25519 AAAA"],
+        runcmd=[["echo", "hello"]],
+    )
+    d = cfg.to_dict()
+    assert "packages" in d
+    assert "ssh_authorized_keys" in d
+    assert "runcmd" in d
+    assert "write_files" not in d
+    assert "users" not in d
+
+
+def test_cloud_init_config_to_dict_empty():
+    cfg = CloudInitConfig()
+    assert cfg.to_dict() == {}
