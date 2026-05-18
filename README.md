@@ -19,7 +19,7 @@ uv add git+https://github.com/miciav/multipass-sdk.git
 To pin to a specific commit or tag:
 
 ```bash
-uv add git+https://github.com/miciav/multipass-sdk.git@v0.3.0
+uv add git+https://github.com/miciav/multipass-sdk.git@v0.6.0
 ```
 
 Multipass itself must be installed on the machine where the SDK is used at runtime. It is **not** required for unit tests.
@@ -29,12 +29,21 @@ Multipass itself must be installed on the machine where the SDK is used at runti
 ## Quick start
 
 ```python
-from multipass import MultipassClient
+from multipass import MultipassClient, VmConfig
 
 client = MultipassClient()
 
 # Launch a VM (name is auto-generated if omitted)
 vm = client.launch(name="my-vm", cpus=2, memory="1G", disk="10G", image="22.04")
+
+# Or use a VmConfig for reusable configs
+vm = client.launch(VmConfig(name="my-vm", cpus=4, memory="8G"))
+
+# Launch multiple VMs in parallel (rolls back on failure)
+vms = client.launch_many([
+    VmConfig(name="web", cpus=2),
+    VmConfig(name="db", cpus=4, memory="8G"),
+])
 
 # Wait until SSH is reachable, then connect
 ip = vm.wait_ready(timeout=180, port=22)
@@ -43,6 +52,10 @@ print(f"VM ready at {ip}")
 # Run a command
 result = vm.exec(["uname", "-r"])
 print(result.stdout)
+
+# Structured exec with cwd and env
+result = vm.exec_structured(["sh", "-c", 'echo "$PWD $MSG"'],
+                            cwd="/tmp", env={"MSG": "hello"})
 
 # Lifecycle
 vm.stop()
@@ -66,7 +79,8 @@ client = MultipassClient(cmd="multipass")   # cmd: path to the CLI binary
 
 | Method | Description |
 |--------|-------------|
-| `launch(name, image, *, cpus, memory, disk, cloud_init, cloud_init_config) → MultipassVM` | Launch a new VM |
+| `launch(name, image, *, cpus, memory, disk, cloud_init, cloud_init_config) → MultipassVM` | Launch a new VM. Accepts `str \| VmConfig \| None` as first argument |
+| `launch_many(configs, *, max_workers) → list[MultipassVM]` | Launch multiple VMs in parallel; rolls back all on any failure |
 | `ensure_running(name, image, *, cpus, memory, disk, cloud_init, cloud_init_config) → MultipassVM` | Idempotent: launch, start, or no-op so the VM ends up Running |
 | `get_vm(name) → MultipassVM` | Get a VM object by name |
 | `list() → list[VmInfo]` | List all VMs |
@@ -92,6 +106,7 @@ client = MultipassClient(cmd="multipass")   # cmd: path to the CLI binary
 | `recover()` | Recover a VM in error state |
 | `delete(*, purge)` | Delete the VM (soft or permanent) |
 | `exec(command: list[str]) → CommandResult` | Run a command in the VM |
+| `exec_structured(argv, *, env, cwd) → CommandResult` | Structured exec: builds the bash prologue (cd + export) from typed arguments |
 | `transfer(source, dest)` | Transfer files between host and VM (recursive) |
 | `mount(source, target, *, mount_type, uid_map, gid_map)` | Mount a host directory |
 | `unmount(mount)` | Unmount a directory |
@@ -117,6 +132,53 @@ ip = vm.wait_ready(timeout=180, port=22)
 ```
 
 Both raise `MultipassTimeoutError` if the deadline is exceeded.
+
+### VmConfig
+
+Reusable configuration for VM launches, shared across `launch()`, `launch_many()`, and `ensure_running()`:
+
+```python
+from multipass import VmConfig
+
+cfg = VmConfig(name="worker", cpus=4, memory="8G", disk="30G", image="22.04")
+
+vm = client.launch(cfg)
+vms = client.launch_many([cfg, VmConfig(name="worker2", cpus=2)])
+```
+
+Fields: `name`, `image`, `cpus` (default 1), `memory` (default "1G"), `disk` (default "5G"), `cloud_init`, `cloud_init_config`.
+
+### CloudInitConfig
+
+Structured cloud-init configuration as an alternative to raw dicts:
+
+```python
+from multipass import CloudInitConfig
+
+cfg = CloudInitConfig(
+    packages=["git", "curl"],
+    ssh_authorized_keys=["ssh-ed25519 AAAA..."],
+    runcmd=[["apt-get", "update"], ["apt-get", "upgrade", "-y"]],
+)
+vm = client.launch(
+    name="my-vm",
+    cloud_init_config=cfg.to_dict(),
+)
+```
+
+Fields: `packages`, `ssh_authorized_keys`, `runcmd`, `write_files`, `users` — all optional. `to_dict()` returns only the fields that were set.
+
+### launch_many
+
+Launch multiple VMs concurrently. If any launch fails, already-created VMs are deleted:
+
+```python
+configs = [
+    VmConfig(name="web", cpus=2, memory="4G"),
+    VmConfig(name="db", cpus=4, memory="16G", disk="100G"),
+]
+vms = client.launch_many(configs, max_workers=4)
+```
 
 ### File transfer
 
@@ -252,7 +314,9 @@ Inject a `FakeBackend` to unit-test code that uses the SDK:
 
 ```python
 import json
-from multipass import MultipassClient, FakeBackend, CommandResult
+from multipass import MultipassClient
+from multipass.testing import FakeBackend
+from multipass import CommandResult
 
 backend = FakeBackend({
     ("multipass", "list", "--format", "json"): CommandResult(
@@ -265,7 +329,7 @@ client = MultipassClient(backend=backend)
 vms = client.list()   # no Multipass required
 ```
 
-`FakeBackend` also supports queued responses for polling scenarios:
+`FakeBackend` also supports queued responses for polling scenarios and tracks `cwd`/`env` for assertions:
 
 ```python
 backend = FakeBackend()
@@ -273,6 +337,9 @@ backend.push("multipass", "info", "my-vm", "--format", "json",
              result=CommandResult(..., stdout=info_no_ip))
 backend.push("multipass", "info", "my-vm", "--format", "json",
              result=CommandResult(..., stdout=info_with_ip))
+
+assert backend.last_cwd() is None
+assert backend.last_env() is None
 ```
 
 ---
@@ -289,6 +356,23 @@ uv run pytest tests/unit/ -v
 # Integration tests (require Multipass installed and running)
 uv run pytest -m integration -v
 ```
+
+## End-to-end script
+
+The SDK ships a `multipass-vm-e2e` console script for full lifecycle verification:
+
+```bash
+uv run multipass-vm-e2e
+uv run multipass-vm-e2e --name my-test --cpus 2 --memory 4G --disk 10G
+uv run multipass-vm-e2e --count 3
+uv run multipass-vm-e2e --configs '[{"name":"web","cpus":2},{"name":"db","cpus":4}]'
+uv run multipass-vm-e2e --list-images
+uv run multipass-vm-e2e --skip transfer,clone
+```
+
+Five-stage pipeline: launch → basic verification → feature tests (exec_structured, stop/start, restart, transfer, clone, snapshot/restore) → cleanup clones → delete VMs.
+
+Feature tests run only in single-VM mode (`--count 1`). Use `--skip all` for a basic lifecycle-only test or `--skip <feature>,...` to skip individual tests.
 
 The integration test suite covers: full VM lifecycle, resources, soft delete + purge, `wait_for_ip`, `wait_ready` + SSH, suspend/resume, file transfer, snapshot/restore, clone, cloud-init, and error handling.
 
